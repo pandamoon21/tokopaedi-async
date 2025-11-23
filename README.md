@@ -33,7 +33,7 @@ Since this library is asynchronous, you must run it within an `async` function u
 ```python
 import asyncio
 import json
-from tokopaedi import search, SearchFilters, get_product
+from tokopaedi_async import search, SearchFilters, get_product
 
 async def main():
     # 1. Setup Filters (Optional)
