@@ -1,8 +1,7 @@
-from curl_cffi import requests
+from curl_cffi.requests import AsyncSession
 import json
 import traceback
 from urllib.parse import quote, parse_qs, urlencode
-import logging
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -12,7 +11,6 @@ from .custom_logging import setup_custom_logging
 from .get_fingerprint import randomize_fp
 
 logger = setup_custom_logging()
-
 
 def search_extractor(result):
     if result['products']:
@@ -83,7 +81,7 @@ def merge_params(original, additional=None):
 
     return "&".join(f"{k}={quote(str(v), safe=',')}" for k, v in merged.items())
 
-def search(keyword="zenbook 14 32gb", max_result=100, result_count=0, base_param=None, next_param=None, filters=None, debug=False):
+async def search(keyword="zenbook 14 32gb", max_result=100, result_count=0, base_param=None, next_param=None, filters=None, debug=False):
     user_id, fingerprint = randomize_fp()
     headers = {
         'Host': 'gql.tokopedia.com',
@@ -127,12 +125,12 @@ def search(keyword="zenbook 14 32gb", max_result=100, result_count=0, base_param
         json_data['variables']['params'] = params
 
     try:
-        response = requests.post(
-            'https://gql.tokopedia.com/graphql/SearchResult/getProductResult',
-            headers=headers,
-            json=json_data,
-            verify=False,
-        )
+        async with AsyncSession(verify=False) as session:
+            response = await session.post(
+                'https://gql.tokopedia.com/graphql/SearchResult/getProductResult',
+                headers=headers,
+                json=json_data,
+            )
 
         if 'searchProductV5' in response.text:
             result = response.json()['data']['searchProductV5']['data']
@@ -146,7 +144,8 @@ def search(keyword="zenbook 14 32gb", max_result=100, result_count=0, base_param
                     return dedupe(result)
 
                 next_param = response.json()['data']['searchProductV5']['header']['additionalParams']
-                next_result = search(
+                # Recursive call with await
+                next_result = await search(
                     keyword=keyword,
                     max_result=max_result,
                     result_count=result_count,

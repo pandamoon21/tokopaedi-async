@@ -1,15 +1,19 @@
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Iterator
+import asyncio
 
 def shop_resolver(shop_tier):
     ''' Find shop tier by id and badge image '''
     try:
         shop_tier = int(shop_tier)
     except:
-        if 'PM%20Pro%20Small.png' in shop_tier:
-            shop_tier = 3
-        elif 'official_store_badge' in shop_tier:
-            shop_tier = 2
+        if isinstance(shop_tier, str):
+            if 'PM%20Pro%20Small.png' in shop_tier:
+                shop_tier = 3
+            elif 'official_store_badge' in shop_tier:
+                shop_tier = 2
+            else:
+                shop_tier = 1
         else:
             shop_tier = 1
 
@@ -106,36 +110,53 @@ class ProductData:
     def json(self):
         return asdict(self)
 
-    def enrich_details(self, debug: bool = False):
+    async def enrich_details(self, debug: bool = False):
         if not self.has_detail:
             from .get_product import get_product
-            enriched_details = get_product(product_id=self.product_id, debug=debug)
+            enriched_details = await get_product(product_id=self.product_id, debug=debug)
 
             if enriched_details:
                 for field_name in self.__dataclass_fields__:
-                    setattr(self, field_name, getattr(enriched_details, field_name))
+                    val = getattr(enriched_details, field_name)
+                    if val is not None and field_name != 'product_id':
+                         setattr(self, field_name, val)
             self.has_detail = True
 
-    def enrich_reviews(self, max_result=None, debug: bool = False):
+    async def enrich_reviews(self, max_result=None, debug: bool = False):
         if not self.has_reviews:
             from .get_reviews import get_reviews
-            self.reviews = get_reviews(product_id=self.product_id, debug=debug)
+            self.reviews = await get_reviews(product_id=self.product_id, debug=debug, max_result=max_result or 10)
             self.has_reviews = True
 
 class SearchResults:
     def __init__(self, items: List[ProductData] = None):
         self.items = items or []
 
-    def enrich_details(self, debug=False):
-        for product in self.items:
-            product.enrich_details(debug)
+    async def enrich_details(self, debug=False, concurrency=20):
+        sem = asyncio.Semaphore(concurrency)
 
-    def enrich_reviews(self, max_result=None, debug=False):
-        for product in self.items:
-            product.enrich_reviews(max_result, debug)
+        async def _bounded_fetch(item):
+            async with sem:
+                try:
+                    await item.enrich_details(debug=debug)
+                except Exception as e:
+                    if debug:
+                        print(f"Failed to enrich {item.product_id}: {e}")
 
-    def __init__(self, items: List[ProductData] = None):
-        self.items = items or []
+        await asyncio.gather(*[_bounded_fetch(item) for item in self.items])
+
+    async def enrich_reviews(self, max_result=10, debug=False, concurrency=20):
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _bounded_fetch(item):
+            async with sem:
+                try:
+                    await item.enrich_reviews(max_result=max_result, debug=debug)
+                except Exception as e:
+                     if debug:
+                        print(f"Failed to fetch reviews {item.product_id}: {e}")
+
+        await asyncio.gather(*[_bounded_fetch(item) for item in self.items])
 
     def append(self, item: ProductData) -> None:
         self.items.append(item)
@@ -168,3 +189,4 @@ class SearchResults:
             return NotImplemented
         self.extend(other.items)
         return self
+    

@@ -1,4 +1,4 @@
-from curl_cffi import requests
+from curl_cffi.requests import AsyncSession
 import logging
 import traceback
 import json
@@ -111,19 +111,24 @@ def product_details_extractor(json_data):
     )
 
 def parse_tokped_url(url):
-    temp = url.split('?')[0]
-    temp = url.split('tokopedia.com/')[1].split('/')
-    shop_id = temp[0] if len(temp) > 0 else ""
-    product_key = temp[1] if len(temp) > 1 else ""
-    return shop_id, product_key
+    try:
+        temp = url.split('?')[0]
+        temp = url.split('tokopedia.com/')[1].split('/')
+        shop_id = temp[0] if len(temp) > 0 else ""
+        product_key = temp[1] if len(temp) > 1 else ""
+        return shop_id, product_key
+    except Exception:
+        return "", ""
 
-def get_product(product_id=None, url=None, debug=False):
+async def get_product(product_id=None, url=None, debug=False):
     assert url or product_id
     user_id, fingerprint = randomize_fp()
     if url:
         shop_id, product_key = parse_tokped_url(url)
         if not product_id:
-            assert shop_id or product_key, "Failed to resolve product from URL"
+            if not shop_id or not product_key:
+                 if debug: logger.detail(f"Failed to resolve URL: {url}")
+                 return None
     if product_id:
         product_id = str(product_id)
         shop_id, product_key = None, None
@@ -176,17 +181,17 @@ def get_product(product_id=None, url=None, debug=False):
     }
 
     try:
-        response = requests.post(
-            'https://gql.tokopedia.com/graphql/ProductDetails/getPDPLayout',
-            headers=headers,
-            json=json_data,
-            verify=False,
-        )
-        result_json = response.json()
-        product_data = product_details_extractor(result_json)
-        if debug:
-            logger.detail(f"{product_data.product_id} - {product_data.product_name[0:40]}...")
-        return product_data
+        async with AsyncSession(verify=False) as session:
+            response = await session.post(
+                'https://gql.tokopedia.com/graphql/ProductDetails/getPDPLayout',
+                headers=headers,
+                json=json_data,
+            )
+            result_json = response.json()
+            product_data = product_details_extractor(result_json)
+            if debug:
+                logger.detail(f"{product_data.product_id} - {product_data.product_name[0:40]}...")
+            return product_data
     except Exception as e:
         print(traceback.format_exc())
-        exit()
+        return None

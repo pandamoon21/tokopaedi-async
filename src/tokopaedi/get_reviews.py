@@ -1,6 +1,7 @@
-from curl_cffi import requests
+from curl_cffi.requests import AsyncSession
 import logging
 import traceback
+import json
 from .tokopaedi_types import ProductReview
 from .custom_logging import setup_custom_logging
 from .get_fingerprint import randomize_fp
@@ -43,12 +44,12 @@ def extract_reviews(json_data):
 
     return reviews
 
-def get_reviews(product_id=None, url=None, max_result=10, page=1, result_count=0, debug=False):
+async def get_reviews(product_id=None, url=None, max_result=10, page=1, result_count=0, debug=False):
     assert product_id or url, "You must provide either 'product_id' or 'url' to fetch reviews."
     user_id, fingerprint = randomize_fp()
     if url:
         ''' Resolve product_id from url using get_product '''
-        product_detail = get_product(url=url)
+        product_detail = await get_product(url=url)
         if product_detail:
             product_id = product_detail.product_id
             assert product_id, "Failed to resolve product_id from URL"
@@ -84,17 +85,16 @@ def get_reviews(product_id=None, url=None, max_result=10, page=1, result_count=0
     }
 
     try:
-        response = requests.post(
-            'https://gql.tokopedia.com/graphql/ProductReview/getProductReviewReadingList',
-            headers=headers,
-            json=json_data
-        )
-        result_json = response.json()
-        has_next = result_json.get('data', {}).get('productrevGetProductReviewList', {}).get('hasNext', False)
-        current_result =  extract_reviews(result_json)
+        async with AsyncSession(verify=False) as session:
+            response = await session.post(
+                'https://gql.tokopedia.com/graphql/ProductReview/getProductReviewReadingList',
+                headers=headers,
+                json=json_data
+            )
+            result_json = response.json()
+            
+        current_result = extract_reviews(result_json)
         if current_result:
-
-            # Debug
             if debug:
                 for line in current_result:
                     review_message = line.message.replace('\n','')[0:40]
@@ -104,7 +104,8 @@ def get_reviews(product_id=None, url=None, max_result=10, page=1, result_count=0
             if result_count >= max_result:
                 return current_result
 
-            next_result = get_reviews(
+            # Recursive call with await
+            next_result = await get_reviews(
                     product_id = str(product_id) if product_id else None,
                     url = url if url else None,
                     max_result = max_result,
@@ -112,8 +113,8 @@ def get_reviews(product_id=None, url=None, max_result=10, page=1, result_count=0
                     result_count = result_count,
                     debug = debug
                 )
-            return current_result+next_result
+            return current_result + next_result
         return current_result
     except:
         print(traceback.format_exc())
-        return None
+        return []
