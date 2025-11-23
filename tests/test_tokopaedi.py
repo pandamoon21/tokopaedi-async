@@ -1,4 +1,4 @@
-from tokopaedi import __version__
+from tokopaedi_async import __version__
 
 
 def test_version():

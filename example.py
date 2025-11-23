@@ -1,6 +1,6 @@
 import asyncio
 import json
-from tokopaedi import search, SearchFilters, get_product, get_reviews
+from tokopaedi_async import search, SearchFilters, get_product, get_reviews
 
 async def main():
     filters = SearchFilters(
