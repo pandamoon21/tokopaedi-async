@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "tokopaedi-async"
-version = "0.1.0"
+version = "0.1.1"
 description = "High-performance Async Python scraper for Tokopedia (Fork of tokopaedi)"
 authors = ["pandamoon21 <pandamoon21@waifu.club>"]
 readme = "README.md"
@@ -28,7 +28,7 @@ classifiers = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.9, <4.0"
 curl-cffi = "^0.11.4"
 
 [build-system]
