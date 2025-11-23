@@ -5,7 +5,7 @@ description = "High-performance Async Python scraper for Tokopedia (Fork of toko
 authors = ["pandamoon21 <pandamoon21@waifu.club>"]
 readme = "README.md"
 license = "MIT"
-packages = [{ include = "tokopaedi", from = "src" }]
+packages = [{ include = "tokopaedi_async", from = "src" }]
 include = ["LICENSE"]
 
 homepage = "https://github.com/pandamoon21/tokopaedi-async"
