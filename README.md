@@ -1,57 +1,82 @@
 
-# Tokopaedi - Python Library for Tokopedia E-Commerce Data Extraction
-![PyPI](https://img.shields.io/pypi/v/tokopaedi) [![PyPI Downloads](https://static.pepy.tech/badge/tokopaedi)](https://pepy.tech/projects/tokopaedi) ![GitHub Repo stars](https://img.shields.io/github/stars/hilmiazizi/tokopaedi?style=social) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/hilmiazizi/tokopaedi/blob/main/LICENSE) ![GitHub forks](https://img.shields.io/github/forks/hilmiazizi/tokopaedi?style=social)
+# Tokopaedi Async - High-Performance Async Python Scraper for Tokopedia
+![PyPI](https://img.shields.io/pypi/v/tokopaedi-async) [![PyPI Downloads](https://static.pepy.tech/badge/tokopaedi-async)](https://pepy.tech/projects/tokopaedi-async) ![GitHub Repo stars](https://img.shields.io/github/stars/pandamoon21/tokopaedi-async?style=social) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/pandamoon21/tokopaedi-async/blob/main/LICENSE) ![GitHub forks](https://img.shields.io/github/forks/pandamoon21/tokopaedi-async?style=social)
 
 **Extract product data, reviews, and search results from Tokopedia with ease.**
 
-Tokopaedi is a powerful Python library designed for scraping e-commerce data from Tokopedia, including product searches, detailed product information, and customer reviews. Ideal for developers, data analysts, and businesses looking to analyze Tokopedia's marketplace.
+tokopaedi-async is a high-performance fork of the original [**Tokopaedi**](https://github.com/hilmiazizi/tokopaedi) library. It leverages Python's asyncio and curl_cffi to perform massive data extraction concurrently, making it significantly faster for bulk operations like enriching product details or fetching thousands of reviews.
 
 
-![Tokopaedi Runtime](https://github.com/hilmiazizi/tokopaedi/blob/main/image/runtime.png?raw=true)
+![Tokopaedi Runtime](https://github.com/pandamoon21/tokopaedi-async/blob/main/image/runtime.png?raw=true)
 
-## Features
-- **Product Search**: Search Tokopedia products by keyword with customizable filters (price, rating, condition, etc.).
-- **Detailed Product Data**: Retrieve rich product details, including variants, pricing, stock, and media.
-- **Customer Reviews**: Scrape product reviews with ratings, timestamps, and more.
-- **Serializable Results**: Dataclass-based results with `.json()` for easy export to JSON or pandas DataFrames.
-- **SearchResults Container**: Iterable and JSON-serializable container that supports enrich_details() and enrich_reviews() to automatically fetch product metadata and reviews for each item.
+## Key Features
+
+- 🚀 **Asynchronous & Concurrent**: Built on asyncio for non-blocking I/O. Fetch details for more products in the time it takes to fetch one.
+- 🔍 **Product Search**: Search products with advanced filters (price, rating, condition, official store, etc.).
+- 📦 **Detailed Product Data**: Retrieve rich product details, including variants, pricing, stock, and media.
+- 💬 **Reviews Scraper**: Scrape product reviews with ratings, timestamps, and more.
+- 🛡️ **Smart Anti-Detection**: Uses curl_cffi to mimic real browser fingerprints (JA3/TLS) and rotating user agents.
+- 📊 **JSON Export**: Easy serialization to JSON or Pandas DataFrame.
 
 
 ## Installation
-Tokopaedi is available on PyPi: [https://pypi.org/project/tokopaedi/](https://pypi.org/project/tokopaedi/)
+Tokopaedi is available on PyPi: [https://pypi.org/project/tokopaedi-async/](https://pypi.org/project/tokopaedi-async/)
 
 Install Tokopaedi via pip:
 
 ```bash
-pip install tokopaedi
+pip install tokopaedi-async
 ```
 
 ##  Quick Start
+Since this library is asynchronous, you must run it within an `async` function using `asyncio`.
 ```python
-from tokopaedi import search, SearchFilters, get_product, get_reviews
+import asyncio
 import json
+from tokopaedi import search, SearchFilters, get_product
 
-filters = SearchFilters(
-            bebas_ongkir_extra = True,
-            pmin = 15000000,
-            pmax = 25000000,
-            rt = 4.5
-        )
+async def main():
+    # 1. Setup Filters (Optional)
+    filters = SearchFilters(
+        bebas_ongkir_extra=True,
+        pmin=15000000,
+        pmax=25000000,
+        rt=4.5
+    )
 
-results = search("Asus Zenbook S14 32GB", max_result=10, debug=True, filters=filters)
-results.enrich_details(debug=True)
-results.enrich_reviews(max_result=50, debug=True)
+    print("🔍 Searching...")
+    # 'await' is required for search
+    results = await search("Asus Zenbook S14 32GB", max_result=100, debug=True, filters=filters)
+    
+    # 2. Parallel Enrichment
+    # This runs 20+ concurrent requests to fetch details/reviews almost instantly
+    print(f"⚡ Enriching data for {len(results)} products...")
+    await results.enrich_details(debug=True)
+    await results.enrich_reviews(max_result=50, debug=True)
 
-with open('log.json','w') as f:
-    f.write(json.dumps(results.json(), indent=4))
-print(results.json())
+    # 3. Save to JSON
+    with open('result.json', 'w') as f:
+        f.write(json.dumps(results.json(), indent=4))
+    print("✅ Done!")
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ## 📘 API Overview
 
-### 🔍 `search(keyword: str, max_result: int = 100, filters: Optional[SearchFilters] = None, debug: bool = False) -> SearchResults`
+### 🔍 `async search(keyword: str, max_result: int = 100, filters: Optional[SearchFilters] = None, debug: bool = False) -> SearchResults`
 
 Search for products from Tokopedia.
+
+```python
+results = await search(
+    keyword="Laptop Gaming", 
+    max_result=100, 
+    filters=filters, 
+    debug=True
+)
+```
 
 **Parameters:**
 
@@ -71,7 +96,7 @@ Search for products from Tokopedia.
 
 ----------
 
-### 📦 `get_product(product_id: Optional[Union[int, str]] = None, url: Optional[str] = None, debug: bool = False) -> ProductData`
+### 📦 `async get_product(product_id: Optional[Union[int, str]] = None, url: Optional[str] = None, debug: bool = False) -> ProductData`
 
 Fetch detailed information for a given Tokopedia product.
 
@@ -90,7 +115,7 @@ Fetch detailed information for a given Tokopedia product.
 
 ----------
 
-### 🗣️ `get_reviews(product_id: Optional[Union[int, str]] = None, url: Optional[str] = None, max_count: int = 20, debug: bool = False) -> List[ProductReview]`
+### 🗣️ `async get_reviews(product_id: Optional[Union[int, str]] = None, url: Optional[str] = None, max_count: int = 20, debug: bool = False) -> List[ProductReview]`
 
 Scrape customer reviews for a given product.
 
@@ -119,19 +144,21 @@ Use `SearchFilters` to refine your search results. All fields are optional. Pass
 
 #### Example:
 ```python
-from tokopaedi import SearchFilters, search
+from tokopaedi_async import SearchFilters
 
 filters = SearchFilters(
-    pmin=100000,
-    pmax=1000000,
-    condition=1,              # 1 = New
-    is_discount=True,
-    bebas_ongkir_extra=True,
-    rt=4.5,                   # Minimum rating 4.5
-    latest_product=30         # Products listed in the last 30 days
+    pmin=100000,           # Min Price
+    pmax=5000000,          # Max Price
+    condition=1,           # 1=New, 2=Used
+    shop_tier=2,           # 2=Official Store, 3=Power Merchant
+    rt=4.5,                # Min Rating
+    latest_product=30,     # Added in last 30 days
+    is_discount=True,      # Only discounted items
+    is_fulfillment=True,   # "Dilayani Tokopedia"
+    is_plus=True           # Tokopedia PLUS
 )
 
-results = search("logitech mouse", filters=filters)
+results = await search("logitech mouse", filters=filters)
 ```
 
 #### Available Fields:
@@ -170,6 +197,14 @@ Enrichment methods are available on both the `SearchResults` container and indiv
 
 ### On `SearchResults`
 
+```python
+# Fetches details for ALL items in the list concurrently
+await results.enrich_details() 
+
+# Fetches reviews for ALL items in the list concurrently
+await results.enrich_reviews(max_result=20)
+```
+
 - `enrich_details(debug: bool = False) -> None`  
   Enriches all items in the result with detailed product info.  
   - `debug`: If `True`, logs each enrichment step.
@@ -181,6 +216,11 @@ Enrichment methods are available on both the `SearchResults` container and indiv
 
 ### On `ProductData`
 
+```python
+await product.enrich_details()
+await product.enrich_reviews()
+```
+
 - `enrich_details(debug: bool = False) -> None`  
   Enriches this specific product with detailed information.
 
@@ -190,82 +230,19 @@ Enrichment methods are available on both the `SearchResults` container and indiv
 This design allows for flexibility: enrich a full result set at once, or enrich individual items selectively as needed.
 
 
-## Example: Scrape directly from Jupyter Notebook
-
-Tokopaedi is fully compatible with Jupyter Notebook, making it easy to explore and manipulate data interactively. You can perform searches, enrich product details and reviews, and convert results to pandas DataFrames for analysis all from a notebook environment.
-
-```python
-from tokopaedi import search, SearchFilters, get_product, get_reviews
-import json
-import pandas as pd
-from pandas import json_normalize
-
-filters = SearchFilters(
-            bebas_ongkir_extra = True,
-            pmin = 15000000,
-            pmax = 25000000,
-            rt = 4.5
-        )
-
-results = search("Asus Zenbook S14 32GB", max_result=10, debug=False, filters=filters)
-
-# Enrich each result with product details and reviews
-results.enrich_details(debug=False)
-results.enrich_reviews(max_result=50, debug=False)
-
-# Convert to DataFrame and preview important fields
-df = json_normalize(results.json())
-df[["product_id", "product_name", "price", "price_original","discount_percentage","rating","shop.name"]].head()
-
-# Reviews
-df.iloc[0].reviews
-
-# Retrieve single product by url
-product = get_product(url="https://www.tokopedia.com/asusrogindonesia/asus-tuf-a15-fa506ncr-ryzen-7-7435hs-rtx3050-4gb-8gb-512gb-w11-ohs-o365-15-6fhd-144hz-ips-rgb-blk-r735b1t-om-laptop-8gb-512gb-4970d?extParam=whid%3D17186756&aff_unique_id=&channel=others&chain_key=")
-product.enrich_reviews(max_result=50, debug=True)
-df = json_normalize(product.json())
-df[["product_id", "product_name", "price", "price_original","discount_percentage","rating","shop.name"]].head()
-```
-![Tokopaedi Runtime](https://github.com/hilmiazizi/tokopaedi/blob/main/image/notebook.png?raw=True)
-
 ## 📋 Changelog
 
-### 0.2.3
-- Update search query
-
-### 0.2.2
-- Add `ProductData.description` to extract description
-
-### 0.2.1
-- Fix image link on documentation for PyPi release
-
-### 0.2.0
-- Improve price accuracy with user spoofing (mobile pricing)
-- Shop type conistency
-- Minor extractor fix
-- Replaced `ProductSearchResult` with `ProductData` for a unified model
-- Removed `combine_data` and replace it with enrichment functions
-- Added `.enrich_details(debug=False)` to `ProductData` and `SearchResults`
-- Added `.enrich_reviews(max_result=10, debug=False)` to `ProductData` and `SearchResults`
-
-### 0.1.3
-- Added `url` parameter to `get_reviews()` and `get_product()` for direct product URL support
-
-### 0.1.1
-- Improved documentation and metadata
-
 ### 0.1.0
-- Initial release with:
-  - `search()` function with filters
-  - `get_product()` for detailed product info
-  - `get_reviews()` for customer reviews
+- Initial release based on [tokopaedi 0.2.3](https://github.com/hilmiazizi/tokopaedi/tree/3d74be192ff9c4e278df24eb930329a1117c68ea)
 
-## Author
+## Disclaimer
 
-Created by [**Hilmi Azizi**](https://hilmiazizi.com). For inquiries, feedback, or collaboration, contact me at [root@hilmiazizi.com](mailto:root@hilmiazizi.com). You can also reach out via [GitHub Issues](https://github.com/hilmiazizi/tokopaedi/issues) for bug reports or feature suggestions.
+This is an unofficial library and is not affiliated with, endorsed, or supported by Tokopedia. It is intended for educational and research purposes only. Please use responsibly and respect the website's Terms of Service.
 
-## 📄 License
+## Credits & License
 
-This project is licensed under the MIT License.
+Original library by [**Hilmi Azizi**](https://hilmiazizi.com) - Thanks :)
 
-You are free to use, modify, and distribute this project with attribution. See the [LICENSE](https://github.com/hilmiazizi/tokopaedi/blob/main/LICENSE) file for more details.
+Async fork maintained by [**pandamoon21**](https://github.com/pandamoon21).
+
+Distributed under the MIT License. See [LICENSE](https://github.com/pandamoon21/tokopaedi-async/blob/main/LICENSE) for more information.
