@@ -232,6 +232,8 @@ This design allows for flexibility: enrich a full result set at once, or enrich 
 
 ## 📋 Changelog
 
+### 0.1.2
+- Update fingerprint data needed based on the new app
 ### 0.1.0
 - Initial release based on [tokopaedi 0.2.3](https://github.com/hilmiazizi/tokopaedi/tree/3d74be192ff9c4e278df24eb930329a1117c68ea)
 

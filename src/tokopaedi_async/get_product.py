@@ -1,7 +1,6 @@
-from curl_cffi.requests import AsyncSession
-import logging
 import traceback
 import json
+from curl_cffi.requests import AsyncSession
 from .tokopaedi_types import ProductData, ProductMedia, ProductOption, ProductVariant, TokopaediShop, shop_resolver
 from .custom_logging import setup_custom_logging
 from .get_fingerprint import randomize_fp
