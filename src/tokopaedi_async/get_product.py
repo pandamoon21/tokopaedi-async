@@ -1,28 +1,697 @@
-import traceback
+"""Product detail (PDP) scraping.
+
+Two things live here and they are deliberately separate:
+
+* :func:`parse_product` — pure. Takes the decoded GraphQL JSON and returns a
+  :class:`~tokopaedi_async.tokopaedi_types.ProductData`. This is the seam tests
+  use; no network is involved.
+* :func:`get_product` — the network-bound interface. Fetches the JSON via
+  :mod:`tokopaedi_async.transport` and hands it to the parser.
+"""
+
+from __future__ import annotations
+
 import json
-from curl_cffi.requests import AsyncSession
-from .tokopaedi_types import ProductData, ProductMedia, ProductOption, ProductVariant, TokopaediShop, shop_resolver
-from .custom_logging import setup_custom_logging
-from .get_fingerprint import randomize_fp
+import logging
+from typing import Any, Dict, Optional
 
-logger = setup_custom_logging()
+from .tokopaedi_types import (
+    ProductData,
+    ProductMedia,
+    ProductOption,
+    ProductVariant,
+    TokopaediShop,
+    shop_resolver,
+)
+from .transport import post_graphql
 
-def product_details_extractor(json_data):
-    pdp = json_data.get("data", {}).get("pdpGetLayout", {})
+logger = logging.getLogger(__name__)
+
+OPERATION = "ProductDetails/getPDPLayout"
+
+# The full PDP layout query. Long by nature: the endpoint returns one card per
+# component and the query must name every card it wants back.
+_QUERY = """query PDP_getPDPLayout($productId: String, $shopDomain: String, $productKey: String, $apiVersion: Float, $whID: String, $layoutID: String, $userLocation: pdpUserLocation, $extParam: String, $tokonow: pdpTokoNow) {
+pdpGetLayout(productID: $productId, shopDomain: $shopDomain, productKey: $productKey, apiVersion: $apiVersion, whID: $whID, layoutID: $layoutID, userLocation: $userLocation, extParam: $extParam, tokonow: $tokonow) {
+requestID
+name
+pdpSession
+basicInfo {
+productID
+initialVariantOptionID
+category {
+id
+name
+title
+breadcrumbURL
+isAdult
+isKyc
+detail {
+id
+name
+breadcrumbURL
+}
+ttsID
+ttsDetail {
+id
+name
+breadcrumbURL
+}
+}
+menu {
+id
+name
+url
+}
+shopID
+shopName
+alias
+minOrder
+maxOrder
+url
+catalogID
+needPrescription
+weight
+weightUnit
+status
+txStats {
+transactionReject
+transactionSuccess
+countSold
+itemSoldFmt
+}
+stats {
+rating
+countTalk
+countView
+countReview
+}
+defaultOngkirEstimation
+isTokoNow
+totalStockFmt
+isGiftable
+defaultMediaURL
+shopMultilocation {
+cityName
+}
+isBlacklisted
+blacklistMessage {
+title
+description
+button
+}
+weightWording
+ttsPID
+ttsSKUID
+ttsShopID
+}
+additionalData {
+fomoSocialProofs {
+name
+text
+icons
+typeIcon
+backgroundColor
+position
+}
+}
+components {
+name
+type
+kind
+data {
+... on pdpDataComponentSocialProofV2 {
+socialProofContent {
+socialProofType
+socialProofID
+title
+subtitle
+icon
+applink {
+appLink
+}
+bgColor
+chevronColor
+showChevron
+hasSeparator
+}
+}
+... on pdpDataProductMedia {
+media {
+type
+URLOriginal
+URLThumbnail
+description
+videoURLIOS
+isAutoplay
+index
+variantOptionID
+URLMaxRes
+}
+recommendation{
+lightIcon
+darkIcon
+iconText
+bottomsheetTitle
+recommendation
+}
+videos {
+source
+url
+}
+containerType
+liveIndicator {
+isLive
+channelID
+mediaURL
+applink
+}
+showJumpToVideo
+}
+... on pdpDataProductContent {
+name
+price {
+value
+currency
+lastUpdateUnix
+priceFmt
+slashPriceFmt
+discPercentage
+currencyFmt
+valueFmt
+}
+campaign {
+campaignID
+campaignType
+campaignTypeName
+percentageAmount
+originalPrice
+discountedPrice
+originalStock
+stock
+stockSoldPercentage
+endDateUnix
+isActive
+hideGimmick
+isUsingOvo
+campaignIdentifier
+background
+paymentInfoWording
+productID
+campaignLogo
+showStockBar
+}
+thematicCampaign {
+productID
+campaignName
+background
+icon
+campaignLogo
+superGraphicURL
+}
+stock {
+useStock
+value
+stockWording
+}
+variant {
+isVariant
+}
+wholesale {
+minQty
+price {
+value
+currency
+lastUpdateUnix
+}
+}
+isFreeOngkir {
+isActive
+imageURL
+}
+preorder {
+duration
+timeUnit
+isActive
+preorderInDays
+}
+isCashback {
+percentage
+}
+isTradeIn
+isOS
+isPowerMerchant
+isWishlist
+isCOD
+parentName
+isShowPrice
+labelIcons {
+iconURL
+label
+}
+}
+... on pdpDataProductInfo {
+row
+content {
+title
+subtitle
+applink
+}
+}
+... on pdpDataInfo {
+title
+applink
+isApplink
+icon
+lightIcon
+darkIcon
+content {
+icon
+text
+}
+separator
+}
+... on pdpDataProductVariant {
+parentID
+defaultChild
+sizeChart
+maxFinalPrice
+componentType
+landingSubText
+socialProof {
+bgColor
+contents {
+name
+content
+iconURL
+}
+}
+variants {
+productVariantID
+variantID
+name
+identifier
+option {
+productVariantOptionID
+variantUnitValueID
+value
+hex
+picture {
+url
+url100
+}
+}
+}
+children {
+productID
+price
+priceFmt
+slashPriceFmt
+discPercentage
+sku
+optionID
+productName
+productURL
+picture {
+url
+url100
+}
+stock {
+stock
+isBuyable
+stockWording
+stockWordingHTML
+minimumOrder
+maximumOrder
+stockFmt
+stockCopy
+}
+isCOD
+isWishlist
+campaignInfo {
+campaignID
+campaignType
+campaignTypeName
+discountPercentage
+originalPrice
+discountPrice
+stock
+stockSoldPercentage
+endDateUnix
+appLinks
+isActive
+hideGimmick
+isUsingOvo
+minOrder
+campaignIdentifier
+background
+paymentInfoWording
+campaignLogo
+showStockBar
+}
+thematicCampaign {
+campaignName
+icon
+background
+productID
+campaignLogo
+superGraphicURL
+}
+subText
+promo {
+value
+iconURL
+productID
+promoPriceFmt
+subtitle
+applink
+color
+background
+promoType
+superGraphicURL
+priceAdditionalFmt
+separatorColor
+bottomsheetParam
+promoCodes {
+promoID
+promoCode
+promoCodeType
+}
+}
+currencyFmt
+valuePriceFmt
+componentPriceType
+isTopSold
+labelIcons {
+iconURL
+label
+}
+ttsPID
+ttsSKUID
+}
+}
+... on pdpDataCustomInfo {
+icon
+title
+isApplink
+applink
+separator
+description
+label {
+value
+color
+}
+lightIcon
+darkIcon
+}
+... on pdpDataComponentReviewV2 {
+mostHelpfulReviewParam {
+limit
+}
+}
+... on pdpDataProductDetail {
+title
+content {
+type
+key
+extParam
+action
+title
+subtitle
+applink
+showAtFront
+showAtBottomsheet
+infoLink
+icon
+}
+catalogBottomsheet {
+actionTitle
+bottomSheetTitle
+param
+}
+bottomsheet {
+actionTitle
+bottomSheetTitle
+param
+}
+}
+... on pdpDataOneLiner {
+productID
+oneLinerContent
+linkText
+applink
+separator
+isVisible
+color
+icon
+eduLink {
+appLink
+}
+}
+... on pdpDataCategoryCarousel {
+linkText
+titleCarousel
+applink
+list {
+categoryID
+icon
+title
+isApplink
+applink
+}
+}
+... on pdpDataBundleComponentInfo {
+title
+widgetType
+productID
+whID
+}
+... on pdpDataDynamicOneLiner {
+name
+applink
+separator
+icon
+status
+chevronPos
+text
+bgColor
+chevronColor
+padding {
+t
+b
+}
+imageSize {
+w
+h
+}
+}
+... on pdpDataComponentDynamicOneLinerVariant {
+name
+applink
+separator
+icon
+status
+chevronPos
+text
+bgColor
+chevronColor
+padding {
+t
+b
+}
+imageSize {
+w
+h
+}
+}
+... on pdpDataCustomInfoTitle {
+title
+status
+componentName
+}
+... on pdpDataProductDetailMediaComponent {
+title
+description
+contentMedia {
+url
+ratio
+type
+}
+show
+ctaText
+}
+... on pdpDataOnGoingCampaign {
+campaign {
+campaignID
+campaignType
+campaignTypeName
+percentageAmount
+originalPrice
+discountedPrice
+originalStock
+stock
+stockSoldPercentage
+endDateUnix
+isActive
+hideGimmick
+isUsingOvo
+campaignIdentifier
+background
+paymentInfoWording
+productID
+campaignLogo
+showStockBar
+}
+thematicCampaign {
+productID
+campaignName
+background
+icon
+campaignLogo
+superGraphicURL
+}
+}
+... on pdpDataProductListComponent {
+thematicID
+queryParam
+}
+... on pdpDataComponentPromoPrice {
+price {
+value
+currency
+lastUpdateUnix
+priceFmt
+slashPriceFmt
+discPercentage
+currencyFmt
+valueFmt
+}
+promo {
+value
+iconURL
+productID
+promoPriceFmt
+subtitle
+applink
+color
+background
+promoType
+superGraphicURL
+priceAdditionalFmt
+separatorColor
+bottomsheetParam
+promoCodes {
+promoID
+promoCode
+promoCodeType
+}
+}
+componentPriceType
+}
+... on pdpDataComponentSDUIDivKit {
+template
+}
+... on pdpDataComponentShipmentV4 {
+data {
+productID
+warehouse_info {
+warehouse_id
+is_fulfillment
+district_id
+postal_code
+geolocation
+city_name
+ttsWarehouseID
+}
+useBOVoucher
+isCOD
+metadata
+}
+}
+... on pdpDataComponentShipmentV5 {
+data {
+productID
+warehouse_info {
+warehouse_id
+is_fulfillment
+district_id
+postal_code
+geolocation
+city_name
+ttsWarehouseID
+}
+useBOVoucher
+isCOD
+metadata
+}
+}
+...on pdpDataAffordabilityGroupLabel {
+affordabilityData{
+productID
+productVouchers {
+identifier
+type
+text
+backgroundColor
+}
+showChevron
+chevronColor
+appliedVoucherTypeIDs
+}
+}
+}
+}
+}
+}"""
+
+
+def _find_component(components: list, name: str) -> list:
+    """Return the ``data`` list of the named PDP component, or ``[]``."""
+    for component in components:
+        if component.get("name") == name:
+            return component.get("data", [])
+    return []
+
+
+def _first(value: list) -> Dict[str, Any]:
+    """Unwrap the one-element lists PDP components arrive in."""
+    return value[0] if value else {}
+
+
+def _resolve_shop_tier(pdp: Dict[str, Any]):
+    """Read the shop tier out of the serialised ``pdpSession`` field.
+
+    ``pdpSession`` is a JSON string embedded in the response; it can be absent
+    or malformed, in which case the tier is unknown and resolved as ``None``.
+    """
+    raw_session = pdp.get("pdpSession")
+    if not raw_session:
+        return None
+    try:
+        return json.loads(raw_session).get("stier")
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_product(json_data: Dict[str, Any]) -> Optional[ProductData]:
+    """Turn a decoded ``getPDPLayout`` response into a :class:`ProductData`.
+
+    Pure function: no network, no globals. Returns ``None`` when the response
+    does not carry a PDP layout, so callers can distinguish "no such product"
+    from "request failed".
+    """
+    pdp = json_data.get("data", {}).get("pdpGetLayout")
+    if not pdp:
+        return None
+
     components = pdp.get("components", [])
-
-    def find_component(name):
-        for c in components:
-            if c.get("name") == name:
-                return c.get("data", [])
-        return []
-
-    product_content = find_component("product_content")
-    product_content = product_content[0] if product_content else {}
-    product_media_raw = find_component("product_media")
-    product_media_raw = product_media_raw[0].get("media", []) if product_media_raw else []
     basic_info = pdp.get("basicInfo", {})
+
+    product_content = _first(_find_component(components, "product_content"))
+    product_media_raw = _first(_find_component(components, "product_media")).get("media", [])
+
     product_url = basic_info.get("url", "")
+
     product_media = [
         ProductMedia(
             original=media.get("URLOriginal", ""),
@@ -34,58 +703,59 @@ def product_details_extractor(json_data):
 
     product_option = []
     variants = []
-    mini_variant = find_component("mini_variant_options")
+    mini_variant = _first(_find_component(components, "mini_variant_options"))
     if mini_variant:
-        mini_variant = mini_variant[0] if mini_variant else {}
-        for option in mini_variant.get('variants', []):
-            option_id = int(option.get('productVariantID', 0) or 0)
-            option_name = option.get('name', '')
-            option_child = [x.get('value', '') for x in option.get('option', [])]
-            product_option.append(ProductOption(
-                option_id=option_id,
-                option_name=option_name,
-                option_child=option_child
-            ))
+        for option in mini_variant.get("variants", []):
+            product_option.append(
+                ProductOption(
+                    option_id=int(option.get("productVariantID", 0) or 0),
+                    option_name=option.get("name", ""),
+                    option_child=[child.get("value", "") for child in option.get("option", [])],
+                )
+            )
 
         for child in mini_variant.get("children", []):
             variants.append(
                 ProductVariant(
                     option_ids=child.get("optionID", []),
-                    option_name=child.get('productName', ""),
-                    option_url=child.get('productURL', ""),
+                    option_name=child.get("productName", ""),
+                    option_url=child.get("productURL", ""),
                     price=child.get("price", 0),
                     price_string=child.get("priceFmt", ""),
-                    discount=child.get('discPercentage', ""),
+                    discount=child.get("discPercentage", ""),
                     image_url=child.get("picture", {}).get("url", ""),
-                    stock=child.get("stock", {}).get('stock', None),
+                    stock=child.get("stock", {}).get("stock", None),
                 )
             )
 
     description = None
-    description_element = find_component('product_detail')
-    if description_element is not None and isinstance(description_element, list) and len(description_element) > 0:
-        content = description_element[0].get('content')
-        if content is not None and isinstance(content, list):
-            for line in content:
-                if isinstance(line, dict) and line.get('key') == 'deskripsi':
-                    description = line.get('subtitle', '')
+    for line in _find_component(components, "product_detail"):
+        if isinstance(line, dict) and line.get("key") == "deskripsi":
+            description = line.get("subtitle", "")
+            break
+    if description is None:
+        detail_content = _first(_find_component(components, "product_detail")).get("content")
+        if isinstance(detail_content, list):
+            for line in detail_content:
+                if isinstance(line, dict) and line.get("key") == "deskripsi":
+                    description = line.get("subtitle", "")
                     break
 
-    pdpdSession = pdp.get('pdpSession')
-    shop_type = json.loads(pdpdSession).get('stier', {}) if pdpdSession else None
+    price = product_content.get("price", {})
+    category = basic_info.get("category", {})
 
     return ProductData(
-        product_id=basic_info.get('productID'),
-        product_sku = basic_info.get("ttsSKUID"),
+        product_id=basic_info.get("productID"),
+        product_sku=basic_info.get("ttsSKUID"),
         product_name=product_content.get("name", ""),
         url=product_url,
         main_image=basic_info.get("defaultMediaURL"),
         status=basic_info.get("status", ""),
         description=description,
-        price=product_content.get("price", {}).get("value", 0),
-        price_text=product_content.get("price", {}).get("priceFmt", ""),
-        price_original=product_content.get("price", {}).get("slashPriceFmt", ""),
-        discount_percentage=product_content.get("price", {}).get("discPercentage", ""),
+        price=price.get("value", 0),
+        price_text=price.get("priceFmt", ""),
+        price_original=price.get("slashPriceFmt", ""),
+        discount_percentage=price.get("discPercentage", ""),
         weight=int(basic_info.get("weight", 0) or 0),
         weight_unit=basic_info.get("weightUnit", ""),
         product_media=product_media,
@@ -93,104 +763,91 @@ def product_details_extractor(json_data):
         rating=float(basic_info.get("stats", {}).get("rating", 0) or 0),
         review_count=int(basic_info.get("stats", {}).get("countReview", 0) or 0),
         discussion_count=int(basic_info.get("stats", {}).get("countTalk", 0) or 0),
-        total_stock=int(basic_info.get("totalStockFmt", "0").replace(".", "") or 0),
+        total_stock=int(str(basic_info.get("totalStockFmt", "0")).replace(".", "") or 0),
         etalase=basic_info.get("menu", {}).get("name", ""),
         etalase_url=basic_info.get("menu", {}).get("url", ""),
-        category=basic_info.get("category", {}).get("name", ""),
-        sub_category=[d.get("name", "") for d in basic_info.get("category", {}).get("detail", [])],
+        category=category.get("name", ""),
+        sub_category=[detail.get("name", "") for detail in category.get("detail", [])],
         product_option=product_option,
         variants=variants,
         shop=TokopaediShop(
             shop_id=int(basic_info.get("shopID", 0) or 0),
             name=basic_info.get("shopName", ""),
-            city=basic_info.get('shopMultilocation', {}).get('cityName', ""),
-            url='/'.join(product_url.split('/')[:-1]),
-            shop_type=shop_resolver(shop_type)
-        )
+            city=basic_info.get("shopMultilocation", {}).get("cityName", ""),
+            url="/".join(product_url.split("/")[:-1]),
+            shop_type=shop_resolver(_resolve_shop_tier(pdp)),
+        ),
     )
 
-def parse_tokped_url(url):
+
+def parse_tokped_url(url: str):
+    """Split a product URL into ``(shop_domain, product_key)``.
+
+    Returns ``("", "")`` for anything that is not a Tokopedia product URL.
+    """
     try:
-        temp = url.split('?')[0]
-        temp = url.split('tokopedia.com/')[1].split('/')
-        shop_id = temp[0] if len(temp) > 0 else ""
-        product_key = temp[1] if len(temp) > 1 else ""
+        path = url.split("?")[0].split("tokopedia.com/")[1].split("/")
+        shop_id = path[0] if len(path) > 0 else ""
+        product_key = path[1] if len(path) > 1 else ""
         return shop_id, product_key
-    except Exception:
+    except (IndexError, AttributeError):
         return "", ""
 
-async def get_product(product_id=None, url=None, debug=False):
-    assert url or product_id
-    user_id, fingerprint = randomize_fp()
-    if url:
+
+async def get_product(product_id=None, url=None, debug=False, session=None) -> Optional[ProductData]:
+    """Fetch full details for one product.
+
+    Args:
+        product_id: Tokopedia product id. Takes precedence when both are given.
+        url: Product URL; parsed into shop domain + product key.
+        debug: Log the resolved product name at DEBUG level.
+        session: Optional caller-owned ``AsyncSession``. Omit on serverless so
+            the request owns and closes its own connection.
+
+    Returns:
+        A :class:`ProductData`, or ``None`` when the URL cannot be parsed or
+        the request failed.
+    """
+    if not product_id and not url:
+        raise ValueError("get_product() requires either 'product_id' or 'url'.")
+
+    if url and not product_id:
         shop_id, product_key = parse_tokped_url(url)
-        if not product_id:
-            if not shop_id or not product_key:
-                 if debug: logger.detail(f"Failed to resolve URL: {url}")
-                 return None
-    if product_id:
+        if not shop_id or not product_key:
+            logger.warning("Could not parse Tokopedia URL: %s", url)
+            return None
+    else:
         product_id = str(product_id)
         shop_id, product_key = None, None
 
-    headers = {
-        'Host': 'gql.tokopedia.com',
-        'Fingerprint-Data': fingerprint,
-        'X-Tkpd-Userid': user_id,
-        'X-Tkpd-Path': '/graphql/ProductDetails/getPDPLayout',
-        'X-Method': 'POST',
-        'Request-Method': 'POST',
-        'X-Tkpd-Akamai': 'pdpGetLayout',
-        'X-Device': 'ios-2.318.0',
-        'Accept-Language': 'id;q=1.0, en;q=0.9',
-        'User-Agent': 'Tokopedia/2.318.0 (com.tokopedia.Tokopedia; build:202505022018; iOS 18.5.0) Alamofire/2.318.0',
-        'Content-Type': 'application/json; encoding=utf-8',
-        'X-App-Version': '2.318.0',
-        'Accept': 'application/json',
-        'X-Theme': 'default',
-        'X-Dark-Mode': 'false',
-        'X-Price-Center': 'true',
-    }
-
-    json_data = {
-        'variables': {
-            'apiVersion': 1,
-            'userLocation': {
-                'addressID': '',
-                'addressName': '',
-                'receiverName': '',
-                'postalCode': '',
-                'districtID': '',
-                'cityID': '',
-                'latlon': '',
+    payload = {
+        "variables": {
+            "apiVersion": 1,
+            "userLocation": {
+                "addressID": "",
+                "addressName": "",
+                "receiverName": "",
+                "postalCode": "",
+                "districtID": "",
+                "cityID": "",
+                "latlon": "",
             },
-            'tokonow': {
-                'shopID': '0',
-                'warehouses': [],
-                'whID': '0',
-                'serviceType': 'ooc',
-            },
-            'extParam': '',
-            'productId': product_id if product_id else "",
-            'shopDomain': shop_id if url else "",
-            'productKey': product_key if url else "",
-            'whID': '',
-            'layoutID': '',
+            "tokonow": {"shopID": "0", "warehouses": [], "whID": "0", "serviceType": "ooc"},
+            "extParam": "",
+            "productId": product_id or "",
+            "shopDomain": shop_id if url else "",
+            "productKey": product_key if url else "",
+            "whID": "",
+            "layoutID": "",
         },
-        'query': 'query PDP_getPDPLayout($productId: String, $shopDomain: String, $productKey: String, $apiVersion: Float, $whID: String, $layoutID: String, $userLocation: pdpUserLocation, $extParam: String, $tokonow: pdpTokoNow) {\npdpGetLayout(productID: $productId, shopDomain: $shopDomain, productKey: $productKey, apiVersion: $apiVersion, whID: $whID, layoutID: $layoutID, userLocation: $userLocation, extParam: $extParam, tokonow: $tokonow) {\nrequestID\nname\npdpSession\nbasicInfo {\nproductID\ninitialVariantOptionID\ncategory {\nid\nname\ntitle\nbreadcrumbURL\nisAdult\nisKyc\ndetail {\nid\nname\nbreadcrumbURL\n}\nttsID\nttsDetail {\nid\nname\nbreadcrumbURL\n}\n}\nmenu {\nid\nname\nurl\n}\nshopID\nshopName\nalias\nminOrder\nmaxOrder\nurl\ncatalogID\nneedPrescription\nweight\nweightUnit\nstatus\ntxStats {\ntransactionReject\ntransactionSuccess\ncountSold\nitemSoldFmt\n}\nstats {\nrating\ncountTalk\ncountView\ncountReview\n}\ndefaultOngkirEstimation\nisTokoNow\ntotalStockFmt\nisGiftable\ndefaultMediaURL\nshopMultilocation {\ncityName\n}\nisBlacklisted\nblacklistMessage {\ntitle\ndescription\nbutton\n}\nweightWording\nttsPID\nttsSKUID\nttsShopID\n}\nadditionalData {\nfomoSocialProofs {\nname\ntext\nicons\ntypeIcon\nbackgroundColor\nposition\n}\n}\ncomponents {\nname\ntype\nkind\ndata {\n... on pdpDataComponentSocialProofV2 {\nsocialProofContent {\nsocialProofType\nsocialProofID\ntitle\nsubtitle\nicon\napplink {\nappLink\n}\nbgColor\nchevronColor\nshowChevron\nhasSeparator\n}\n}\n... on pdpDataProductMedia {\nmedia {\ntype\nURLOriginal\nURLThumbnail\ndescription\nvideoURLIOS\nisAutoplay\nindex\nvariantOptionID\nURLMaxRes\n}\nrecommendation{\nlightIcon\ndarkIcon\niconText\nbottomsheetTitle\nrecommendation\n}\nvideos {\nsource\nurl\n}\ncontainerType\nliveIndicator {\nisLive\nchannelID\nmediaURL\napplink\n}\nshowJumpToVideo\n}\n... on pdpDataProductContent {\nname\nprice {\nvalue\ncurrency\nlastUpdateUnix\npriceFmt\nslashPriceFmt\ndiscPercentage\ncurrencyFmt\nvalueFmt\n}\ncampaign {\ncampaignID\ncampaignType\ncampaignTypeName\npercentageAmount\noriginalPrice\ndiscountedPrice\noriginalStock\nstock\nstockSoldPercentage\nendDateUnix\nisActive\nhideGimmick\nisUsingOvo\ncampaignIdentifier\nbackground\npaymentInfoWording\nproductID\ncampaignLogo\nshowStockBar\n}\nthematicCampaign {\nproductID\ncampaignName\nbackground\nicon\ncampaignLogo\nsuperGraphicURL\n}\nstock {\nuseStock\nvalue\nstockWording\n}\nvariant {\nisVariant\n}\nwholesale {\nminQty\nprice {\nvalue\ncurrency\nlastUpdateUnix\n}\n}\nisFreeOngkir {\nisActive\nimageURL\n}\npreorder {\nduration\ntimeUnit\nisActive\npreorderInDays\n}\nisCashback {\npercentage\n}\nisTradeIn\nisOS\nisPowerMerchant\nisWishlist\nisCOD\nparentName\nisShowPrice\nlabelIcons {\niconURL\nlabel\n}\n}\n... on pdpDataProductInfo {\nrow\ncontent {\ntitle\nsubtitle\napplink\n}\n}\n... on pdpDataInfo {\ntitle\napplink\nisApplink\nicon\nlightIcon\ndarkIcon\ncontent {\nicon\ntext\n}\nseparator\n}\n... on pdpDataProductVariant {\nparentID\ndefaultChild\nsizeChart\nmaxFinalPrice\ncomponentType\nlandingSubText\nsocialProof {\nbgColor\ncontents {\nname\ncontent\niconURL\n}\n}\nvariants {\nproductVariantID\nvariantID\nname\nidentifier\noption {\nproductVariantOptionID\nvariantUnitValueID\nvalue\nhex\npicture {\nurl\nurl100\n}\n}\n}\nchildren {\nproductID\nprice\npriceFmt\nslashPriceFmt\ndiscPercentage\nsku\noptionID\nproductName\nproductURL\npicture {\nurl\nurl100\n}\nstock {\nstock\nisBuyable\nstockWording\nstockWordingHTML\nminimumOrder\nmaximumOrder\nstockFmt\nstockCopy\n}\nisCOD\nisWishlist\ncampaignInfo {\ncampaignID\ncampaignType\ncampaignTypeName\ndiscountPercentage\noriginalPrice\ndiscountPrice\nstock\nstockSoldPercentage\nendDateUnix\nappLinks\nisActive\nhideGimmick\nisUsingOvo\nminOrder\ncampaignIdentifier\nbackground\npaymentInfoWording\ncampaignLogo\nshowStockBar\n}\nthematicCampaign {\ncampaignName\nicon\nbackground\nproductID\ncampaignLogo\nsuperGraphicURL\n}\nsubText\npromo {\nvalue\niconURL\nproductID\npromoPriceFmt\nsubtitle\napplink\ncolor\nbackground\npromoType\nsuperGraphicURL\npriceAdditionalFmt\nseparatorColor\nbottomsheetParam\npromoCodes {\npromoID\npromoCode\npromoCodeType\n}\n}\ncurrencyFmt\nvaluePriceFmt\ncomponentPriceType\nisTopSold\nlabelIcons {\niconURL\nlabel\n}\nttsPID\nttsSKUID\n}\n}\n... on pdpDataCustomInfo {\nicon\ntitle\nisApplink\napplink\nseparator\ndescription\nlabel {\nvalue\ncolor\n}\nlightIcon\ndarkIcon\n}\n... on pdpDataComponentReviewV2 {\nmostHelpfulReviewParam {\nlimit\n}\n}\n... on pdpDataProductDetail {\ntitle\ncontent {\ntype\nkey\nextParam\naction\ntitle\nsubtitle\napplink\nshowAtFront\nshowAtBottomsheet\ninfoLink\nicon\n}\ncatalogBottomsheet {\nactionTitle\nbottomSheetTitle\nparam\n}\nbottomsheet {\nactionTitle\nbottomSheetTitle\nparam\n}\n}\n... on pdpDataOneLiner {\nproductID\noneLinerContent\nlinkText\napplink\nseparator\nisVisible\ncolor\nicon\neduLink {\nappLink\n}\n}\n... on pdpDataCategoryCarousel {\nlinkText\ntitleCarousel\napplink\nlist {\ncategoryID\nicon\ntitle\nisApplink\napplink\n}\n}\n... on pdpDataBundleComponentInfo {\ntitle\nwidgetType\nproductID\nwhID\n}\n... on pdpDataDynamicOneLiner {\nname\napplink\nseparator\nicon\nstatus\nchevronPos\ntext\nbgColor\nchevronColor\npadding {\nt\nb\n}\nimageSize {\nw\nh\n}\n}\n... on pdpDataComponentDynamicOneLinerVariant {\nname\napplink\nseparator\nicon\nstatus\nchevronPos\ntext\nbgColor\nchevronColor\npadding {\nt\nb\n}\nimageSize {\nw\nh\n}\n}\n... on pdpDataCustomInfoTitle {\ntitle\nstatus\ncomponentName\n}\n... on pdpDataProductDetailMediaComponent {\ntitle\ndescription\ncontentMedia {\nurl\nratio\ntype\n}\nshow\nctaText\n}\n... on pdpDataOnGoingCampaign {\ncampaign {\ncampaignID\ncampaignType\ncampaignTypeName\npercentageAmount\noriginalPrice\ndiscountedPrice\noriginalStock\nstock\nstockSoldPercentage\nendDateUnix\nisActive\nhideGimmick\nisUsingOvo\ncampaignIdentifier\nbackground\npaymentInfoWording\nproductID\ncampaignLogo\nshowStockBar\n}\nthematicCampaign {\nproductID\ncampaignName\nbackground\nicon\ncampaignLogo\nsuperGraphicURL\n}\n}\n... on pdpDataProductListComponent {\nthematicID\nqueryParam\n}\n... on pdpDataComponentPromoPrice {\nprice {\nvalue\ncurrency\nlastUpdateUnix\npriceFmt\nslashPriceFmt\ndiscPercentage\ncurrencyFmt\nvalueFmt\n}\npromo {\nvalue\niconURL\nproductID\npromoPriceFmt\nsubtitle\napplink\ncolor\nbackground\npromoType\nsuperGraphicURL\npriceAdditionalFmt\nseparatorColor\nbottomsheetParam\npromoCodes {\npromoID\npromoCode\npromoCodeType\n}\n}\ncomponentPriceType\n}\n... on pdpDataComponentSDUIDivKit {\ntemplate\n}\n... on pdpDataComponentShipmentV4 {\ndata {\nproductID\nwarehouse_info {\nwarehouse_id\nis_fulfillment\ndistrict_id\npostal_code\ngeolocation\ncity_name\nttsWarehouseID\n}\nuseBOVoucher\nisCOD\nmetadata\n}\n}\n... on pdpDataComponentShipmentV5 {\ndata {\nproductID\nwarehouse_info {\nwarehouse_id\nis_fulfillment\ndistrict_id\npostal_code\ngeolocation\ncity_name\nttsWarehouseID\n}\nuseBOVoucher\nisCOD\nmetadata\n}\n}\n...on pdpDataAffordabilityGroupLabel {\naffordabilityData{\nproductID\nproductVouchers {\nidentifier\ntype\ntext\nbackgroundColor\n}\nshowChevron\nchevronColor\nappliedVoucherTypeIDs\n}\n}\n}\n}\n}\n}',
+        "query": _QUERY,
     }
 
-    try:
-        async with AsyncSession(verify=False) as session:
-            response = await session.post(
-                'https://gql.tokopedia.com/graphql/ProductDetails/getPDPLayout',
-                headers=headers,
-                json=json_data,
-            )
-            result_json = response.json()
-            product_data = product_details_extractor(result_json)
-            if debug:
-                logger.detail(f"{product_data.product_id} - {product_data.product_name[0:40]}...")
-            return product_data
-    except Exception as e:
-        print(traceback.format_exc())
+    json_data = await post_graphql(OPERATION, payload, session=session)
+    if not json_data:
         return None
+
+    product_data = parse_product(json_data)
+    if product_data and debug:
+        logger.debug("%s - %s...", product_data.product_id, (product_data.product_name or "")[:40])
+    return product_data

@@ -1,9 +1,28 @@
+# Python
 __pycache__/
-*.pyc
-.env
-.venv
-dist/
+*.py[cod]
+*.egg-info/
 build/
-*.egg-info
-*sh
-*json
+dist/
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Secrets
+.env
+.env.*
+
+# Local scratch output
+result.json
+*.local.json
+
+# OS
+.DS_Store
+Thumbs.db

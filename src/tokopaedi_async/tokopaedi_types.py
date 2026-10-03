@@ -1,30 +1,31 @@
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Iterator
-import asyncio
+
 
 def shop_resolver(shop_tier):
-    ''' Find shop tier by id and badge image '''
+    """Map a shop tier (id or badge image URL) to its display name.
+
+    Accepts the numeric tier (``1``/``2``/``3``) or the badge URL the search
+    API returns in its place. Unknown input resolves to ``None`` rather than
+    silently claiming "Normal".
+    """
+    if shop_tier is None:
+        return None
+
     try:
-        shop_tier = int(shop_tier)
-    except:
+        tier = int(shop_tier)
+    except (TypeError, ValueError):
         if isinstance(shop_tier, str):
             if 'PM%20Pro%20Small.png' in shop_tier:
-                shop_tier = 3
+                tier = 3
             elif 'official_store_badge' in shop_tier:
-                shop_tier = 2
+                tier = 2
             else:
-                shop_tier = 1
+                return None
         else:
-            shop_tier = 1
+            return None
 
-    if shop_tier == 1:
-        return 'Normal'
-    elif shop_tier == 2:
-        return 'Mall'
-    elif shop_tier == 3:
-        return 'Power Shop'
-    else:
-        return None
+    return {1: 'Normal', 2: 'Mall', 3: 'Power Shop'}.get(tier)
 
 @dataclass
 class ProductReview:
@@ -50,7 +51,7 @@ class TokopaediShop:
     name: str
     city: Optional[str]
     url: str
-    shop_type: str
+    shop_type: Optional[str] = None
 
 @dataclass
 class ProductMedia:
@@ -107,56 +108,125 @@ class ProductData:
     has_detail: bool = False
     has_reviews: bool = False
 
+    # Fields owned by a PDP fetch. ``enrich_details`` merges only these, so a
+    # search result's review fields can never be clobbered by a product fetch.
+    DETAIL_FIELDS = (
+        "product_sku",
+        "product_name",
+        "url",
+        "main_image",
+        "status",
+        "description",
+        "price",
+        "price_text",
+        "price_original",
+        "discount_percentage",
+        "weight",
+        "weight_unit",
+        "product_media",
+        "sold_count",
+        "rating",
+        "review_count",
+        "discussion_count",
+        "total_stock",
+        "etalase",
+        "etalase_url",
+        "category",
+        "sub_category",
+        "product_option",
+        "variants",
+        "shop",
+    )
+
+    def merge_details(self, detail: "ProductData") -> "ProductData":
+        """Copy the PDP-owned fields from ``detail`` onto this product.
+
+        Precedence is explicit and one-directional: the detail fetch wins for
+        :attr:`DETAIL_FIELDS`, everything else on this object is preserved.
+        Replaces the previous reflective copy of *every* non-``None`` field,
+        which silently overwrote review data and changed behavior whenever a
+        dataclass field was added.
+        """
+        for field_name in self.DETAIL_FIELDS:
+            value = getattr(detail, field_name, None)
+            if value is not None:
+                setattr(self, field_name, value)
+        return self
+
     def json(self):
         return asdict(self)
 
-    async def enrich_details(self, debug: bool = False):
-        if not self.has_detail:
-            from .get_product import get_product
-            enriched_details = await get_product(product_id=self.product_id, debug=debug)
+    async def enrich_details(self, debug: bool = False, session=None):
+        """Fetch this product's full PDP data and merge it in.
 
-            if enriched_details:
-                for field_name in self.__dataclass_fields__:
-                    val = getattr(enriched_details, field_name)
-                    if val is not None and field_name != 'product_id':
-                         setattr(self, field_name, val)
+        Idempotent: a second call is a no-op once ``has_detail`` is set.
+        """
+        if self.has_detail:
+            return self
+        from .get_product import get_product
+
+        enriched = await get_product(product_id=self.product_id, debug=debug, session=session)
+        if enriched is not None:
+            self.merge_details(enriched)
             self.has_detail = True
+        return self
 
-    async def enrich_reviews(self, max_result=None, debug: bool = False):
-        if not self.has_reviews:
-            from .get_reviews import get_reviews
-            self.reviews = await get_reviews(product_id=self.product_id, debug=debug, max_result=max_result or 10)
-            self.has_reviews = True
+    async def enrich_reviews(self, max_result=None, debug: bool = False, session=None):
+        """Fetch this product's reviews and attach them.
+
+        Idempotent: a second call is a no-op once ``has_reviews`` is set.
+        ``has_reviews`` is only set when the fetch actually returns.
+        """
+        if self.has_reviews:
+            return self
+        from .get_reviews import get_reviews
+
+        self.reviews = await get_reviews(
+            product_id=self.product_id,
+            debug=debug,
+            max_result=max_result or 10,
+            session=session,
+        )
+        self.has_reviews = True
+        return self
+
 
 class SearchResults:
     def __init__(self, items: List[ProductData] = None):
         self.items = items or []
 
-    async def enrich_details(self, debug=False, concurrency=20):
-        sem = asyncio.Semaphore(concurrency)
+    async def enrich_details(self, debug=False, concurrency=10, session=None):
+        """Populate PDP details for every product, bounded by ``concurrency``.
 
-        async def _bounded_fetch(item):
-            async with sem:
-                try:
-                    await item.enrich_details(debug=debug)
-                except Exception as e:
-                    if debug:
-                        print(f"Failed to enrich {item.product_id}: {e}")
+        Returns a list of ``(item, exception)`` pairs for the products that
+        failed. An empty list means full success; a partial failure leaves the
+        successful products enriched.
+        """
+        from .concurrency import bounded_gather, log_failures
 
-        await asyncio.gather(*[_bounded_fetch(item) for item in self.items])
+        failures = await bounded_gather(
+            self.items,
+            lambda item: item.enrich_details(debug=debug, session=session),
+            concurrency=concurrency,
+        )
+        log_failures(failures, "enrich_details", total=len(self.items))
+        return failures
 
-    async def enrich_reviews(self, max_result=10, debug=False, concurrency=20):
-        sem = asyncio.Semaphore(concurrency)
+    async def enrich_reviews(self, max_result=10, debug=False, concurrency=10, session=None):
+        """Populate reviews for every product, bounded by ``concurrency``.
 
-        async def _bounded_fetch(item):
-            async with sem:
-                try:
-                    await item.enrich_reviews(max_result=max_result, debug=debug)
-                except Exception as e:
-                     if debug:
-                        print(f"Failed to fetch reviews {item.product_id}: {e}")
+        Returns a list of ``(item, exception)`` pairs for the products that
+        failed, mirroring :meth:`enrich_details`.
+        """
+        from .concurrency import bounded_gather, log_failures
 
-        await asyncio.gather(*[_bounded_fetch(item) for item in self.items])
+        failures = await bounded_gather(
+            self.items,
+            lambda item: item.enrich_reviews(max_result=max_result, debug=debug, session=session),
+            concurrency=concurrency,
+        )
+        log_failures(failures, "enrich_reviews", total=len(self.items))
+        return failures
 
     def append(self, item: ProductData) -> None:
         self.items.append(item)

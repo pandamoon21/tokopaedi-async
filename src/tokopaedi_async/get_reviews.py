@@ -1,120 +1,201 @@
-from curl_cffi.requests import AsyncSession
+"""Customer review scraping.
+
+:func:`parse_reviews` is the pure seam (GraphQL JSON in, ``ProductReview``
+list out). :func:`get_reviews` walks pages via
+:mod:`tokopaedi_async.pagination`.
+
+The previous implementation re-resolved a product URL to an id on *every*
+recursive page, so a URL-based call fetched the full PDP once per page. URL
+resolution now happens exactly once, at the top.
+"""
+
+from __future__ import annotations
+
 import logging
-import traceback
-import json
-from .tokopaedi_types import ProductReview
-from .custom_logging import setup_custom_logging
-from .get_fingerprint import randomize_fp
+from typing import Any, Dict, List
+
 from .get_product import get_product
+from .pagination import paginate
+from .tokopaedi_types import ProductReview
+from .transport import post_graphql
 
-logger = setup_custom_logging()
+logger = logging.getLogger(__name__)
 
-def extract_reviews(json_data):
-    reviews = []
-    
-    data = json_data.get("data", {})
-    productrev_list = data.get("productrevGetProductReviewList", {})
-    items = productrev_list.get("list", [])
-    
+OPERATION = "ProductReview/getProductReviewReadingList"
+
+_QUERY = """query productrevGetProductReviewList($productID: String!, $page: Int!, $limit: Int!, $sortBy: String,
+$filterBy: String, $opt: String) {
+productrevGetProductReviewList(productID: $productID, page: $page, limit: $limit, sortBy: $sortBy,
+filterBy: $filterBy, opt: $opt) {
+list {
+feedbackID
+variantName
+message
+productRating
+reviewCreateTime
+reviewCreateTimestamp
+isAnonymous
+isReportable
+reviewResponse {
+message
+createTime
+}
+user {
+userID
+fullName
+image
+url
+label
+}
+imageAttachments {
+attachmentID
+imageThumbnailUrl
+imageUrl
+}
+videoAttachments {
+attachmentID
+videoUrl
+}
+likeDislike {
+totalLike
+likeStatus
+}
+stats {
+key
+formatted
+count
+}
+badRatingReasonFmt
+}
+shop {
+shopID
+name
+url
+image
+}
+variantFilter {
+isUnavailable
+ticker
+}
+hasNext
+}
+}"""
+
+# The endpoint pages in fixed increments of 10.
+PAGE_SIZE = 10
+
+
+def parse_reviews(payload: Dict[str, Any]) -> List[ProductReview]:
+    """Turn a decoded review-list response into ``ProductReview`` items.
+
+    Pure function: no network, no globals. Returns ``[]`` when the response
+    carries no review list.
+    """
+    items = (
+        payload.get("data", {})
+        .get("productrevGetProductReviewList", {})
+        .get("list", [])
+    )
     if not items:
-        return reviews
+        return []
 
+    reviews: List[ProductReview] = []
     for item in items:
-        images = item.get("imageAttachments", [])
-        videos = item.get("videoAttachments", [])
-        like_dislike = item.get("likeDislike", {})
         user = item.get("user", {})
-        review_response = item.get("reviewResponse", {})
+        response = item.get("reviewResponse", {}) or {}
+        like_dislike = item.get("likeDislike", {})
 
-        review = ProductReview(
-            feedback_id=int(item.get("feedbackID", 0)),
-            variant_name=item.get("variantName", ""),
-            message=item.get("message", ""),
-            rating=float(item.get("productRating", 0)),
-            review_age=item.get("reviewCreateTimestamp", ""),
-            user_full_name=user.get("fullName", ""),
-            user_url=user.get("url", ""),
-            response_message=review_response.get("message", ""),
-            response_created_text=review_response.get("createTime", ""),
-            images=[img.get("imageUrl", "") for img in images],
-            videos=[v for v in videos],
-            likes=like_dislike.get("totalLike", 0),
+        reviews.append(
+            ProductReview(
+                feedback_id=int(item.get("feedbackID", 0) or 0),
+                variant_name=item.get("variantName", ""),
+                message=item.get("message", ""),
+                rating=float(item.get("productRating", 0) or 0),
+                review_age=item.get("reviewCreateTimestamp", ""),
+                user_full_name=user.get("fullName", ""),
+                user_url=user.get("url", ""),
+                response_message=response.get("message", ""),
+                response_created_text=response.get("createTime", ""),
+                images=[img.get("imageUrl", "") for img in item.get("imageAttachments", [])],
+                videos=[v.get("videoUrl", "") for v in item.get("videoAttachments", [])],
+                likes=like_dislike.get("totalLike", 0),
+            )
         )
-        reviews.append(review)
-
     return reviews
 
-async def get_reviews(product_id=None, url=None, max_result=10, page=1, result_count=0, debug=False):
-    assert product_id or url, "You must provide either 'product_id' or 'url' to fetch reviews."
-    user_id, fingerprint = randomize_fp()
-    if url:
-        ''' Resolve product_id from url using get_product '''
-        product_detail = await get_product(url=url)
-        if product_detail:
-            product_id = product_detail.product_id
-            assert product_id, "Failed to resolve product_id from URL"
 
-    headers = {
-        'Host': 'gql.tokopedia.com',
-        'Fingerprint-Data': fingerprint,
-        'X-Tkpd-Userid': user_id,
-        'X-Tkpd-Path': '/graphql/ProductReview/getProductReviewReadingList',
-        'X-Device': 'ios-2.318.0',
-        'Request-Method': 'POST',
-        'X-Method': 'POST',
-        'Accept-Language': 'id;q=1.0, en;q=0.9',
-        'User-Agent': 'Tokopedia/2.318.0 (com.tokopedia.Tokopedia; build:202505022018; iOS 18.5.0) Alamofire/2.318.0',
-        'Content-Type': 'application/json; encoding=utf-8',
-        'X-App-Version': '2.318.0',
-        'Accept': 'application/json',
-        'X-Dark-Mode': 'true',
-        'X-Theme': 'default',
-        'X-Price-Center': 'true',
-    }
+def has_next_page(payload: Dict[str, Any]) -> bool:
+    """Whether the response advertises another review page."""
+    return bool(
+        payload.get("data", {})
+        .get("productrevGetProductReviewList", {})
+        .get("hasNext")
+    )
 
-    json_data = {
-        'query': 'query productrevGetProductReviewList($productID: String!, $page: Int!, $limit: Int!, $sortBy: String,\n$filterBy: String, $opt: String) {\nproductrevGetProductReviewList(productID: $productID, page: $page, limit: $limit, sortBy: $sortBy,\nfilterBy: $filterBy, opt: $opt) {\nlist {\nfeedbackID\nvariantName\nmessage\nproductRating\nreviewCreateTime\nreviewCreateTimestamp\nisAnonymous\nisReportable\nreviewResponse {\nmessage\ncreateTime\n}\nuser {\nuserID\nfullName\nimage\nurl\nlabel\n}\nimageAttachments {\nattachmentID\nimageThumbnailUrl\nimageUrl\n}\nvideoAttachments {\nattachmentID\nvideoUrl\n}\nlikeDislike {\ntotalLike\nlikeStatus\n}\nstats {\nkey\nformatted\ncount\n}\nbadRatingReasonFmt\n}\nshop {\nshopID\nname\nurl\nimage\n}\nvariantFilter {\nisUnavailable\nticker\n}\nhasNext\n}\n}',
-        'variables': {
-            'productID': str(product_id),
-            'page': page,
-            'filterBy': '',
-            'opt': '',
-            'limit': 10,
-            'sortBy': 'informative_score desc',
-        },
-    }
 
-    try:
-        async with AsyncSession(verify=False) as session:
-            response = await session.post(
-                'https://gql.tokopedia.com/graphql/ProductReview/getProductReviewReadingList',
-                headers=headers,
-                json=json_data
-            )
-            result_json = response.json()
-            
-        current_result = extract_reviews(result_json)
-        if current_result:
-            if debug:
-                for line in current_result:
-                    review_message = line.message.replace('\n','')[0:40]
-                    logger.reviews(f"{line.feedback_id} - {review_message}...")
+async def get_reviews(
+    product_id=None,
+    url=None,
+    max_result: int = 10,
+    debug: bool = False,
+    session=None,
+) -> List[ProductReview]:
+    """Fetch up to ``max_result`` customer reviews for one product.
 
-            result_count += len(current_result)
-            if result_count >= max_result:
-                return current_result
+    Args:
+        product_id: Tokopedia product id.
+        url: Product URL; resolved to an id once, up front, when ``product_id``
+            is not given.
+        max_result: Upper bound on returned reviews.
+        debug: Log per-page progress at DEBUG level.
+        session: Optional caller-owned ``AsyncSession`` for connection reuse.
 
-            # Recursive call with await
-            next_result = await get_reviews(
-                    product_id = str(product_id) if product_id else None,
-                    url = url if url else None,
-                    max_result = max_result,
-                    page = page+1,
-                    result_count = result_count,
-                    debug = debug
-                )
-            return current_result + next_result
-        return current_result
-    except:
-        print(traceback.format_exc())
-        return []
+    Returns:
+        A list of :class:`ProductReview`. Empty when the product has no
+        reviews or the request failed.
+
+    Raises:
+        ValueError: When neither ``product_id`` nor ``url`` is provided, or
+            when the URL cannot be resolved to a product id.
+    """
+    if not product_id and not url:
+        raise ValueError("get_reviews() requires either 'product_id' or 'url'.")
+
+    if not product_id:
+        product = await get_product(url=url, session=session)
+        if not product or not product.product_id:
+            raise ValueError(f"Could not resolve a product id from URL: {url}")
+        product_id = product.product_id
+    product_id = str(product_id)
+
+    async def fetch_page(page: int):
+        payload = {
+            "query": _QUERY,
+            "variables": {
+                "productID": product_id,
+                "page": page,
+                "filterBy": "",
+                "opt": "",
+                "limit": PAGE_SIZE,
+                "sortBy": "informative_score desc",
+            },
+        }
+        response = await post_graphql(OPERATION, payload, session=session)
+        if not response:
+            return [], None
+
+        reviews = parse_reviews(response)
+        if debug:
+            for review in reviews:
+                logger.debug("%s - %s...", review.feedback_id, review.message.replace("\n", "")[:40])
+
+        if not reviews or not has_next_page(response):
+            return reviews, None
+        return reviews, page + 1
+
+    return await paginate(
+        fetch_page,
+        start_state=1,
+        max_result=max_result,
+        key=lambda review: review.feedback_id,
+    )

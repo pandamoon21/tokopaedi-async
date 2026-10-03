@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "tokopaedi-async"
-version = "0.1.2"
-description = "High-performance Async Python scraper for Tokopedia (Fork of tokopaedi)"
+version = "0.2.0"
+description = "High-performance, serverless-safe async Python scraper for Tokopedia"
 authors = ["pandamoon21 <pandamoon21@waifu.club>"]
 readme = "README.md"
 license = "MIT"
@@ -11,7 +11,11 @@ include = ["LICENSE"]
 homepage = "https://github.com/pandamoon21/tokopaedi-async"
 repository = "https://github.com/pandamoon21/tokopaedi-async"
 documentation = "https://github.com/pandamoon21/tokopaedi-async"
-keywords = ["tokopedia", "scraper", "ecommerce", "product", "data", "web-scraping", "python", "data-analysis", "tokopedia-reviews", "async", "asyncio"]
+keywords = [
+    "tokopedia", "scraper", "ecommerce", "product", "data",
+    "web-scraping", "python", "data-analysis", "tokopedia-reviews",
+    "async", "asyncio", "serverless", "vercel", "lambda",
+]
 
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -24,12 +28,23 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Operating System :: OS Independent"
+    "Operating System :: OS Independent",
 ]
 
 [tool.poetry.dependencies]
 python = ">=3.9, <4.0"
-curl-cffi = "^0.11.4"
+curl-cffi = ">=0.11.4"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0"
+pytest-cov = ">=4.0"
+
+[tool.poetry.group.examples]
+optional = true
+
+[tool.poetry.group.examples.dependencies]
+fastapi = ">=0.110"
+uvicorn = ">=0.27"
 
 [build-system]
 requires = ["poetry-core>=1.1.0"]
