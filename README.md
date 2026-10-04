@@ -17,7 +17,7 @@ iOS TLS/JA3 fingerprint, and pulls many products and reviews at once instead of 
 It is built to run inside a function runtime as well as a long-lived process: importing the
 package has no side effects, each request owns its HTTP session, and every call has a timeout.
 
-![Terminal run of example.py](image/runtime.png)
+![Terminal run of example.py](https://raw.githubusercontent.com/pandamoon21/tokopaedi-async/main/image/runtime.png)
 
 ```python
 import asyncio
@@ -38,7 +38,7 @@ async def main():
 asyncio.run(main())
 ```
 
-![Jupyter usage](image/notebook.png)
+![Jupyter usage](https://raw.githubusercontent.com/pandamoon21/tokopaedi-async/main/image/notebook.png)
 
 ---
 
