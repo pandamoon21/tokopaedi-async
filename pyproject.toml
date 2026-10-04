@@ -1,6 +1,6 @@
 [project]
 name = "tokopaedi-async"
-version = "0.2.1"
+version = "0.2.2"
 description = "High-performance, serverless-safe async Python scraper for Tokopedia"
 readme = "README.md"
 license = { text = "MIT" }

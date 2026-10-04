@@ -1,6 +1,6 @@
 # 📘 API Documentation
 
-Detailed reference for `tokopaedi-async` v0.2.1.
+Detailed reference for `tokopaedi-async` v0.2.2.
 
 ```bash
 uv add tokopaedi-async          # recommended

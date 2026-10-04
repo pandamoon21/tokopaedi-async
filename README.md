@@ -2,7 +2,7 @@
 
 **High-performance, serverless-safe async Python scraper for Tokopedia.**
 
-![PyPI](https://img.shields.io/badge/pypi-v0.2.1-blue)
+![PyPI](https://img.shields.io/badge/pypi-v0.2.2-blue)
 [![PyPI Downloads](https://static.pepy.tech/badge/tokopaedi-async)](https://pepy.tech/projects/tokopaedi-async)
 ![GitHub Repo stars](https://img.shields.io/github/stars/pandamoon21/tokopaedi-async?style=social)
 ![GitHub forks](https://img.shields.io/github/forks/pandamoon21/tokopaedi-async?style=social)
