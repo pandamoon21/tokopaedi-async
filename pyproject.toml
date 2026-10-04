@@ -1,22 +1,16 @@
-[tool.poetry]
+[project]
 name = "tokopaedi-async"
-version = "0.2.0"
+version = "0.2.1"
 description = "High-performance, serverless-safe async Python scraper for Tokopedia"
-authors = ["pandamoon21 <pandamoon21@waifu.club>"]
 readme = "README.md"
-license = "MIT"
-packages = [{ include = "tokopaedi_async", from = "src" }]
-include = ["LICENSE"]
-
-homepage = "https://github.com/pandamoon21/tokopaedi-async"
-repository = "https://github.com/pandamoon21/tokopaedi-async"
-documentation = "https://github.com/pandamoon21/tokopaedi-async"
+license = { text = "MIT" }
+requires-python = ">=3.9,<4.0"
+authors = [{ name = "pandamoon21", email = "pandamoon21@waifu.club" }]
 keywords = [
     "tokopedia", "scraper", "ecommerce", "product", "data",
     "web-scraping", "python", "data-analysis", "tokopedia-reviews",
     "async", "asyncio", "serverless", "vercel", "lambda",
 ]
-
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -28,24 +22,52 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
 ]
+dependencies = [
+    "curl-cffi>=0.11.4",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.9, <4.0"
-curl-cffi = ">=0.11.4"
+[project.optional-dependencies]
+# `pip install tokopaedi-async[serverless]` / `uv add 'tokopaedi-async[serverless]'`
+serverless = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.5",
+]
 
-[tool.poetry.group.dev.dependencies]
-pytest = ">=7.0"
-pytest-cov = ">=4.0"
+[project.urls]
+Homepage = "https://github.com/pandamoon21/tokopaedi-async"
+Repository = "https://github.com/pandamoon21/tokopaedi-async"
+Documentation = "https://github.com/pandamoon21/tokopaedi-async"
 
-[tool.poetry.group.examples]
-optional = true
+# ---------------------------------------------------------------------------
+# Poetry reads [project] above for metadata and dependencies; this table only
+# carries what PEP 621 cannot express. Keeping one metadata source means
+# `uv sync`, `uv lock`, `pip install .`, and `poetry build` all agree.
+# ---------------------------------------------------------------------------
+[tool.poetry]
+packages = [{ include = "tokopaedi_async", from = "src" }]
+include = ["LICENSE"]
 
-[tool.poetry.group.examples.dependencies]
-fastapi = ">=0.110"
-uvicorn = ">=0.27"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:xonsh"
+filterwarnings = ["error::DeprecationWarning"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
 
 [build-system]
-requires = ["poetry-core>=1.1.0"]
+requires = ["poetry-core>=2.0.0"]
 build-backend = "poetry.core.masonry.api"

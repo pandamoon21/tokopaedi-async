@@ -2,7 +2,7 @@
 
 **High-performance, serverless-safe async Python scraper for Tokopedia.**
 
-![PyPI](https://img.shields.io/badge/pypi-v0.2.0-blue)
+![PyPI](https://img.shields.io/badge/pypi-v0.2.1-blue)
 [![PyPI Downloads](https://static.pepy.tech/badge/tokopaedi-async)](https://pepy.tech/projects/tokopaedi-async)
 ![GitHub Repo stars](https://img.shields.io/github/stars/pandamoon21/tokopaedi-async?style=social)
 ![GitHub forks](https://img.shields.io/github/forks/pandamoon21/tokopaedi-async?style=social)
@@ -81,6 +81,14 @@ the requests looking like the real iOS app.
 
 ## Installation
 
+With [uv](https://docs.astral.sh/uv/) (recommended — fastest, lockfile-aware):
+
+```bash
+uv add tokopaedi-async
+```
+
+With pip:
+
 ```bash
 pip install tokopaedi-async
 ```
@@ -92,6 +100,12 @@ poetry add tokopaedi-async
 ```
 
 Requires Python 3.9+. The only runtime dependency is `curl-cffi`.
+
+To run it once without adding it to a project:
+
+```bash
+uvx --from tokopaedi-async python -c "import tokopaedi_async; print(tokopaedi_async.__version__)"
+```
 
 ---
 
@@ -278,7 +292,7 @@ It is a FastAPI app that runs unchanged locally under `uvicorn` and on Vercel's 
 runtime.
 
 ```bash
-pip install fastapi uvicorn
+uv add 'tokopaedi-async[serverless]'   # or: pip install 'tokopaedi-async[serverless]'
 uvicorn examples.serverless_app:app --reload
 curl "http://127.0.0.1:8000/search?q=zenbook&limit=5&reviews=10"
 ```
@@ -413,10 +427,22 @@ request shape changes, it is contained in one `build_headers`/payload pair.
 ```bash
 git clone https://github.com/pandamoon21/tokopaedi-async.git
 cd tokopaedi-async
+uv sync                    # creates .venv from uv.lock, incl. dev deps
+uv run pytest
+uv run python example.py   # hits the real API
+```
+
+Or with Poetry:
+
+```bash
 poetry install
 poetry run pytest
 poetry run python example.py     # hits the real API
 ```
+
+The project uses [PEP 621](https://peps.python.org/pep-0621/) metadata in `pyproject.toml`,
+so `uv sync`, `pip install .`, and `poetry build` all read the same source of truth.
+`uv.lock` is committed for reproducible dev environments.
 
 Conventions:
 

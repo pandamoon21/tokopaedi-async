@@ -20,7 +20,7 @@ Types:
   :class:`ProductReview`, :class:`TokopaediShop`.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 import logging
 from dataclasses import dataclass

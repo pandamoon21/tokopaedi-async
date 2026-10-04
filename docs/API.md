@@ -1,6 +1,11 @@
 # 📘 API Documentation
 
-Detailed reference for `tokopaedi-async` v0.2.0.
+Detailed reference for `tokopaedi-async` v0.2.1.
+
+```bash
+uv add tokopaedi-async          # recommended
+pip install tokopaedi-async     # or pip
+```
 
 Every function that touches the network is a coroutine and takes an optional `session`
 argument. Omit `session` on serverless (each request owns its connection) and pass one in a

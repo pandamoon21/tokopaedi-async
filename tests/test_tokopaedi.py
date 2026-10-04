@@ -159,7 +159,7 @@ def product_page(pid=1, name="Widget", rating="4.9", review_count=11, order_crea
 # Package surface
 # --------------------------------------------------------------------------
 def test_version():
-    assert t.__version__ == "0.2.0"
+    assert t.__version__ == "0.2.1"
 
 
 def test_public_interface_is_exported():
